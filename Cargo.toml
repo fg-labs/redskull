@@ -1,0 +1,51 @@
+[package]
+authors = [
+    "Nils Homer <nils@fulcrumgenomics.com>"
+]
+name = "redskull"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/fg-labs/redskull"
+repository = "https://github.com/fg-labs/redskull"
+description = "A conda recipe generator for Rust crates."
+keywords = ["bioinformatics", "genomic"]
+categories = ["science"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+[lib]
+name = "redskull_lib"
+path = "src/lib/mod.rs"
+
+[[bin]]
+name = "redskull"
+path = "src/bin/main.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.97"
+log = "0.4"
+clap = { version = "4.5.32", features = ["derive", "unstable-markdown"] }
+crates_io_api = "0.12.0"
+env_logger = "0.11.7"
+mimalloc = { version = "0.1.32", default-features = false }
+num_cpus = "1.16.0"
+regex = "1.11.1"
+reqwest = { version = "0.12.14", features = ["blocking"] }
+sha2 = "0.10"
+toml = "0.8"
+serde_json = "1.0.149"
+
+[build-dependencies]
+built = {version ="0.7.7", features = ["git2"]}
+
+[dev-dependencies]
+tempfile = "3.3.0"
+serde = { version = "1", features = ["derive"] }
+serde_yml = "0.0.12"
+pretty_assertions = "1"

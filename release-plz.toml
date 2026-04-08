@@ -1,0 +1,19 @@
+[workspace]
+# Enable changelog generation driven by Conventional Commits.
+changelog_update = true
+# Create a GitHub release when a release PR is merged.
+git_release_enable = true
+# Tag each release in git.
+git_tag_enable = true
+# Publish the crate to crates.io on release.
+publish = true
+# Verify the package builds before publishing.
+publish_allow_dirty = false
+# Use semver-compatible version bumps.
+semver_check = true
+
+[[package]]
+name = "redskull"
+# Group pre-1.0 releases under a single major so breaking changes
+# can still bump the minor version appropriately.
+changelog_include = ["redskull"]
