@@ -31,6 +31,12 @@ pub fn github_archive_url(repo: &GitHubRepo, version: &str, tag_prefix: &str) ->
     format!("https://github.com/{}/{}/archive/{tag_prefix}{version}.tar.gz", repo.owner, repo.name)
 }
 
+/// Replace the version portion of a tag with the jinja `{{ version }}` placeholder.
+/// If the tag does not contain the version, returns the literal tag.
+pub fn tag_to_jinja_template(tag: &str, version: &str) -> String {
+    if tag.contains(version) { tag.replace(version, "{{ version }}") } else { tag.to_string() }
+}
+
 /// Resolved GitHub source info.
 pub struct ResolvedGitHubSource {
     /// URL template with `{{ version }}` jinja placeholder.
@@ -109,19 +115,17 @@ fn resolve_with_tag(
     let archive_base = if use_refs_tags { "archive/refs/tags" } else { "archive" };
 
     // Build URL template: replace the version portion of the tag with {{ version }}
-    let template = if tag.contains(version) {
-        let template_tag = tag.replace(version, "{{ version }}");
-        format!(
-            "https://github.com/{}/{}/{archive_base}/{template_tag}.tar.gz",
-            repo.owner, repo.name
-        )
-    } else {
+    if !tag.contains(version) {
         log::warn!(
             "Tag '{tag}' does not contain version '{version}'; \
              URL template will use the literal tag and won't auto-update."
         );
-        format!("https://github.com/{}/{}/{archive_base}/{tag}.tar.gz", repo.owner, repo.name)
-    };
+    }
+    let template_tag = tag_to_jinja_template(tag, version);
+    let template = format!(
+        "https://github.com/{}/{}/{archive_base}/{template_tag}.tar.gz",
+        repo.owner, repo.name
+    );
 
     Ok(ResolvedGitHubSource { url_template: template, sha256: hash, tag: tag.to_string() })
 }

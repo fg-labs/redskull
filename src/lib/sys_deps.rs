@@ -64,10 +64,16 @@ pub fn detect_host_deps(dependency_names: &[&str]) -> Vec<(&'static str, Option<
     deps
 }
 
+/// Crates that require a C compiler but no external host dependency
+/// (they bundle and statically link their own C sources).
+const C_ONLY_CRATES: &[&str] = &["mimalloc", "libmimalloc-sys"];
+
 /// Returns true if any dependency links C code.
-/// Detects both `-sys` crates and the `cc` build crate.
+/// Detects `-sys` crates, the `cc` build crate, and crates that bundle their own C sources.
 pub fn needs_c_compiler(dependency_names: &[&str]) -> bool {
-    dependency_names.iter().any(|name| *name == "cc" || !map_sys_crate(name).is_empty())
+    dependency_names.iter().any(|name| {
+        *name == "cc" || !map_sys_crate(name).is_empty() || C_ONLY_CRATES.contains(name)
+    })
 }
 
 /// Returns true if any dependency requires a C++ compiler.
@@ -77,8 +83,6 @@ pub fn needs_cxx_compiler(dependency_names: &[&str]) -> bool {
         "cxx",
         "cxx-build",
         "cpp",
-        "mimalloc",
-        "libmimalloc-sys",
         "cmake",
         "cmake-build",
         "rocksdb",

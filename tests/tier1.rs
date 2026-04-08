@@ -275,6 +275,7 @@ fn test_pure_rust_requirements() {
     assert!(names.contains(&"{{ compiler('rust') }}"));
     assert!(!names.contains(&"{{ compiler('c') }}"), "pure Rust should not include compiler('c')");
     assert!(!names.contains(&"{{ compiler('cxx') }}"));
+    assert!(!names.contains(&"{{ stdlib('c') }}"), "pure Rust should not include stdlib('c')");
     assert!(!names.contains(&"cargo-bundle-licenses"));
     assert!(!names.contains(&"clangdev"));
     assert!(!names.contains(&"pkg-config"));
@@ -288,6 +289,7 @@ fn test_requirements_with_c_deps() {
     let reqs = Requirements::for_rust_crate(false, true, false, false, &no_tools);
     let names: Vec<&str> = reqs.build.iter().map(|r| r.name.as_str()).collect();
     assert!(names.contains(&"{{ compiler('c') }}"));
+    assert!(names.contains(&"{{ stdlib('c') }}"), "C deps should pull in stdlib('c')");
     assert!(names.contains(&"{{ compiler('rust') }}"));
     assert!(!names.contains(&"{{ compiler('cxx') }}"), "cxx only when explicitly needed");
 }
@@ -299,6 +301,7 @@ fn test_requirements_with_cxx_deps() {
     let names: Vec<&str> = reqs.build.iter().map(|r| r.name.as_str()).collect();
     assert!(names.contains(&"{{ compiler('c') }}"));
     assert!(names.contains(&"{{ compiler('cxx') }}"));
+    assert!(names.contains(&"{{ stdlib('c') }}"), "C++ deps should pull in stdlib('c')");
     assert!(names.contains(&"{{ compiler('rust') }}"));
 }
 
@@ -819,7 +822,7 @@ fn test_max_pin_x() {
 // --- Gap 13: license_family optional ---
 
 #[test]
-fn test_bioconda_no_license_family_by_default() {
+fn test_bioconda_has_license_family_by_default() {
     let mut builder = RecipeBuilder::new("mytool", "1.0.0");
     builder
         .github_source("test", "mytool", "abc123")
@@ -828,7 +831,7 @@ fn test_bioconda_no_license_family_by_default() {
         .bioconda(true);
     let (recipe, _script) = builder.build();
     let output = MetaYamlRenderer.render(&recipe);
-    assert!(!output.contains("license_family"), "bioconda should not emit license_family");
+    assert_contains(&output, "license_family: MIT", "bioconda should emit license_family");
 }
 
 #[test]
@@ -841,17 +844,17 @@ fn test_non_bioconda_has_license_family() {
 }
 
 #[test]
-fn test_bioconda_explicit_license_family() {
+fn test_bioconda_explicit_disable_license_family() {
     let mut builder = RecipeBuilder::new("mytool", "1.0.0");
     builder
         .github_source("test", "mytool", "abc123")
         .license("MIT")
         .add_binary("mytool")
         .bioconda(true)
-        .emit_license_family(true);
+        .emit_license_family(false);
     let (recipe, _script) = builder.build();
     let output = MetaYamlRenderer.render(&recipe);
-    assert_contains(&output, "license_family: MIT", "explicit emit should work");
+    assert!(!output.contains("license_family"), "explicit disable should suppress license_family");
 }
 
 // --- Gap 14: binary stripping ---
@@ -1002,9 +1005,12 @@ fn test_is_prerelease_tag() {
 // --- CXX compiler detection expanded ---
 
 #[test]
-fn test_needs_cxx_compiler_mimalloc() {
-    assert!(sys_deps::needs_cxx_compiler(&["mimalloc", "serde"]));
-    assert!(sys_deps::needs_cxx_compiler(&["libmimalloc-sys", "clap"]));
+fn test_mimalloc_needs_c_not_cxx() {
+    // mimalloc is pure C — it should require a C compiler but not C++.
+    assert!(sys_deps::needs_c_compiler(&["mimalloc", "serde"]));
+    assert!(sys_deps::needs_c_compiler(&["libmimalloc-sys", "clap"]));
+    assert!(!sys_deps::needs_cxx_compiler(&["mimalloc", "serde"]));
+    assert!(!sys_deps::needs_cxx_compiler(&["libmimalloc-sys", "clap"]));
 }
 
 #[test]

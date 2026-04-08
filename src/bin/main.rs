@@ -146,7 +146,7 @@ struct Opts {
     #[clap(long, default_value = "false")]
     strip: bool,
 
-    /// Emit license_family in the recipe. Defaults to false in --bioconda mode.
+    /// Emit license_family in the recipe. Defaults to true.
     #[clap(long)]
     license_family: Option<bool>,
 
@@ -422,9 +422,12 @@ fn redskull_from_opts(opts: &Opts) -> Result<()> {
         if let Some(ref docs) = crate_data.documentation {
             builder.documentation(docs);
         } else if let Some((ref repo, ref tag)) = github_info {
-            // Fall back to repo README for doc_url
-            let doc_url =
-                format!("https://github.com/{}/{}/blob/{tag}/README.md", repo.owner, repo.name);
+            // Fall back to repo README for doc_url, with `{{ version }}` jinja placeholder
+            let template_tag = source::tag_to_jinja_template(tag, &version_str);
+            let doc_url = format!(
+                "https://github.com/{}/{}/blob/{template_tag}/README.md",
+                repo.owner, repo.name
+            );
             builder.documentation(&doc_url);
         }
 
@@ -800,8 +803,12 @@ fn process_github_only(
     if let Some(doc_url) = pkg_meta.documentation(ws_ref) {
         builder.documentation(&doc_url);
     } else {
-        let doc_url =
-            format!("https://github.com/{}/{}/blob/{tag}/README.md", repo.owner, repo.name);
+        // Fall back to repo README for doc_url, with `{{ version }}` jinja placeholder
+        let template_tag = source::tag_to_jinja_template(&tag, &version_str);
+        let doc_url = format!(
+            "https://github.com/{}/{}/blob/{template_tag}/README.md",
+            repo.owner, repo.name
+        );
         builder.documentation(&doc_url);
     }
 
