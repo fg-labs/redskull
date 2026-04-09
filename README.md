@@ -114,7 +114,7 @@ Options:
           Strip debug symbols from binaries after build
 
       --license-family <LICENSE_FAMILY>
-          Emit license_family in the recipe. Defaults to false in --bioconda mode
+          Emit license_family in the recipe. Defaults to true
 
           [possible values: true, false]
 

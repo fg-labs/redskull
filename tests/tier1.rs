@@ -1,7 +1,9 @@
 mod common;
 use common::*;
 use redskull_lib::build_script::BuildScript;
-use redskull_lib::crate_inspector::{CargoMetadata, resolve_workspace_members};
+use redskull_lib::crate_inspector::{
+    CargoMetadata, parse_cargo_lock_str, resolve_workspace_members,
+};
 use redskull_lib::recipe::*;
 use redskull_lib::recipe_builder::RecipeBuilder;
 use redskull_lib::renderer::{MetaYamlRenderer, Renderer};
@@ -275,6 +277,7 @@ fn test_pure_rust_requirements() {
     assert!(names.contains(&"{{ compiler('rust') }}"));
     assert!(!names.contains(&"{{ compiler('c') }}"), "pure Rust should not include compiler('c')");
     assert!(!names.contains(&"{{ compiler('cxx') }}"));
+    assert!(!names.contains(&"{{ stdlib('c') }}"), "pure Rust should not include stdlib('c')");
     assert!(!names.contains(&"cargo-bundle-licenses"));
     assert!(!names.contains(&"clangdev"));
     assert!(!names.contains(&"pkg-config"));
@@ -288,6 +291,7 @@ fn test_requirements_with_c_deps() {
     let reqs = Requirements::for_rust_crate(false, true, false, false, &no_tools);
     let names: Vec<&str> = reqs.build.iter().map(|r| r.name.as_str()).collect();
     assert!(names.contains(&"{{ compiler('c') }}"));
+    assert!(names.contains(&"{{ stdlib('c') }}"), "C deps should pull in stdlib('c')");
     assert!(names.contains(&"{{ compiler('rust') }}"));
     assert!(!names.contains(&"{{ compiler('cxx') }}"), "cxx only when explicitly needed");
 }
@@ -299,6 +303,22 @@ fn test_requirements_with_cxx_deps() {
     let names: Vec<&str> = reqs.build.iter().map(|r| r.name.as_str()).collect();
     assert!(names.contains(&"{{ compiler('c') }}"));
     assert!(names.contains(&"{{ compiler('cxx') }}"));
+    assert!(names.contains(&"{{ stdlib('c') }}"), "C++ deps should pull in stdlib('c')");
+    assert!(names.contains(&"{{ compiler('rust') }}"));
+}
+
+/// Exercise the C++-only branch (no C deps). The stdlib('c') requirement must
+/// still appear — bioconda's `compiler_needs_stdlib_c` lint requires it whenever
+/// any C/C++ compiler is present — and `compiler('c')` must NOT be added when
+/// only C++ is requested.
+#[test]
+fn test_requirements_with_cxx_only_deps() {
+    let no_tools = BuildToolNeeds { pkg_config: false, make: false, cmake: false };
+    let reqs = Requirements::for_rust_crate(false, false, true, false, &no_tools);
+    let names: Vec<&str> = reqs.build.iter().map(|r| r.name.as_str()).collect();
+    assert!(!names.contains(&"{{ compiler('c') }}"), "cxx-only must not add compiler('c')");
+    assert!(names.contains(&"{{ compiler('cxx') }}"));
+    assert!(names.contains(&"{{ stdlib('c') }}"), "C++ still needs stdlib('c') for bioconda lint");
     assert!(names.contains(&"{{ compiler('rust') }}"));
 }
 
@@ -819,7 +839,7 @@ fn test_max_pin_x() {
 // --- Gap 13: license_family optional ---
 
 #[test]
-fn test_bioconda_no_license_family_by_default() {
+fn test_bioconda_has_license_family_by_default() {
     let mut builder = RecipeBuilder::new("mytool", "1.0.0");
     builder
         .github_source("test", "mytool", "abc123")
@@ -828,7 +848,7 @@ fn test_bioconda_no_license_family_by_default() {
         .bioconda(true);
     let (recipe, _script) = builder.build();
     let output = MetaYamlRenderer.render(&recipe);
-    assert!(!output.contains("license_family"), "bioconda should not emit license_family");
+    assert_contains(&output, "license_family: MIT", "bioconda should emit license_family");
 }
 
 #[test]
@@ -841,17 +861,17 @@ fn test_non_bioconda_has_license_family() {
 }
 
 #[test]
-fn test_bioconda_explicit_license_family() {
+fn test_bioconda_explicit_disable_license_family() {
     let mut builder = RecipeBuilder::new("mytool", "1.0.0");
     builder
         .github_source("test", "mytool", "abc123")
         .license("MIT")
         .add_binary("mytool")
         .bioconda(true)
-        .emit_license_family(true);
+        .emit_license_family(false);
     let (recipe, _script) = builder.build();
     let output = MetaYamlRenderer.render(&recipe);
-    assert_contains(&output, "license_family: MIT", "explicit emit should work");
+    assert!(!output.contains("license_family"), "explicit disable should suppress license_family");
 }
 
 // --- Gap 14: binary stripping ---
@@ -1002,9 +1022,12 @@ fn test_is_prerelease_tag() {
 // --- CXX compiler detection expanded ---
 
 #[test]
-fn test_needs_cxx_compiler_mimalloc() {
-    assert!(sys_deps::needs_cxx_compiler(&["mimalloc", "serde"]));
-    assert!(sys_deps::needs_cxx_compiler(&["libmimalloc-sys", "clap"]));
+fn test_mimalloc_needs_c_not_cxx() {
+    // mimalloc is pure C — it should require a C compiler but not C++.
+    assert!(sys_deps::needs_c_compiler(&["mimalloc", "serde"]));
+    assert!(sys_deps::needs_c_compiler(&["libmimalloc-sys", "clap"]));
+    assert!(!sys_deps::needs_cxx_compiler(&["mimalloc", "serde"]));
+    assert!(!sys_deps::needs_cxx_compiler(&["libmimalloc-sys", "clap"]));
 }
 
 #[test]
@@ -1020,8 +1043,11 @@ fn test_needs_cxx_compiler_htslib() {
 }
 
 #[test]
-fn test_needs_cxx_compiler_libgit2() {
-    assert!(sys_deps::needs_cxx_compiler(&["libgit2-sys", "serde"]));
+fn test_libgit2_does_not_require_cxx_or_cmake() {
+    // libgit2 is pure C; libgit2-sys uses pkg-config to find the system lib.
+    assert!(!sys_deps::needs_cxx_compiler(&["libgit2-sys", "serde"]));
+    assert!(!sys_deps::needs_cmake(&["libgit2-sys", "serde"]));
+    assert!(sys_deps::needs_pkg_config(&["libgit2-sys"]));
 }
 
 // --- Workspace binary name fallback ---
@@ -1044,4 +1070,82 @@ path = "src/main.rs"
     // But binary name does
     let bins = meta.binary_names();
     assert!(bins.contains(&"sage".to_string()));
+}
+
+/// A lockfile containing a transitive `openssl-sys` entry should surface openssl
+/// through the sys-dep detection pipeline. This is the central guarantee of
+/// transitive dep detection: the root crate has no direct `-sys` dep, but the
+/// resolved graph does.
+#[test]
+fn test_parse_cargo_lock_picks_up_transitive_openssl() {
+    let lockfile = r#"
+# This file is automatically @generated by Cargo.
+version = 3
+
+[[package]]
+name = "my-crate"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+]
+
+[[package]]
+name = "reqwest"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "hyper-tls",
+]
+
+[[package]]
+name = "hyper-tls"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "native-tls",
+]
+
+[[package]]
+name = "native-tls"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "openssl-sys",
+]
+
+[[package]]
+name = "openssl-sys"
+version = "0.9.106"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+    let names = parse_cargo_lock_str(lockfile).unwrap();
+    assert!(names.contains(&"openssl-sys".to_string()), "expected openssl-sys in: {names:?}");
+    assert!(names.contains(&"reqwest".to_string()));
+
+    // Feeding the full list into sys-dep detection should surface openssl as a host dep
+    // and demand a C compiler — neither of which would happen if we only inspected the
+    // root crate's direct deps.
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let host = sys_deps::detect_host_deps(&refs);
+    assert!(
+        host.iter().any(|(pkg, _)| *pkg == "openssl"),
+        "expected openssl in host deps: {host:?}"
+    );
+    assert!(sys_deps::needs_c_compiler(&refs));
+    assert!(sys_deps::needs_pkg_config(&refs));
+}
+
+/// An empty Cargo.lock (no [[package]] entries) should return an empty vec, not error.
+#[test]
+fn test_parse_cargo_lock_empty() {
+    let lockfile = "version = 3\n";
+    let names = parse_cargo_lock_str(lockfile).unwrap();
+    assert!(names.is_empty());
+}
+
+/// Malformed TOML should return an error, not panic.
+#[test]
+fn test_parse_cargo_lock_invalid_toml() {
+    let lockfile = "this is not valid toml [[";
+    assert!(parse_cargo_lock_str(lockfile).is_err());
 }

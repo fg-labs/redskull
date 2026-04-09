@@ -114,6 +114,10 @@ impl Requirements {
         if has_cxx_deps {
             build.push(Requirement::simple("{{ compiler('cxx') }}"));
         }
+        // Bioconda lints require stdlib('c') whenever a C/C++ compiler is present.
+        if has_c_deps || has_cxx_deps {
+            build.push(Requirement::simple("{{ stdlib('c') }}"));
+        }
         build.push(Requirement::simple("{{ compiler('rust') }}"));
 
         if cargo_bundle_licenses {

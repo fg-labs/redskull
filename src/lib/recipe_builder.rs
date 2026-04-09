@@ -239,7 +239,7 @@ impl RecipeBuilder {
     }
 
     /// Control whether `license_family` is emitted.
-    /// Defaults to false for bioconda mode, true otherwise.
+    /// Defaults to `true` unless explicitly disabled.
     pub fn emit_license_family(&mut self, v: bool) -> &mut Self {
         self.emit_license_family = Some(v);
         self
@@ -299,7 +299,7 @@ impl RecipeBuilder {
             if script.needs_build_sh() { None } else { Some(script.inline_script()) };
 
         // Determine whether to emit license_family
-        let emit_family = self.emit_license_family.unwrap_or(!self.is_bioconda);
+        let emit_family = self.emit_license_family.unwrap_or(true);
         let license_family = if emit_family { self.license_family } else { None };
 
         // Requirements

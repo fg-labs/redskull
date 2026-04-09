@@ -22,7 +22,9 @@ impl Renderer for MetaYamlRenderer {
         self.render_test(&mut out, &recipe.test);
         self.render_about(&mut out, &recipe.about);
         self.render_extra(&mut out, &recipe.extra);
-        out
+        // Ensure the output ends with exactly one trailing newline.
+        let trimmed = out.trim_end_matches('\n');
+        format!("{trimmed}\n")
     }
 }
 

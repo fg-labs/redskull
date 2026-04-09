@@ -1,6 +1,7 @@
 //! Inspect crate source to extract binary names, license files, and workspace info.
 
 use anyhow::{Result, anyhow};
+use std::path::Path;
 
 /// Parsed metadata from a crate's Cargo.toml.
 pub struct CargoMetadata {
@@ -183,6 +184,36 @@ pub fn resolve_workspace_members(members: &[String], tree: &[String]) -> Vec<Str
         }
     }
     result
+}
+
+/// Parse a `Cargo.lock` file and return all resolved package names.
+///
+/// Reads the `[[package]]` entries from the lockfile, which represent the full
+/// resolved dependency graph (including transitive `-sys` crates). This is the
+/// authoritative source for "what does cargo actually build"; parsing only the
+/// top-level `Cargo.toml` misses anything pulled in through the dependency tree.
+///
+/// Names are returned in the order they appear in the lockfile. Duplicates
+/// (multiple versions of the same crate) are preserved so callers can dedup
+/// as appropriate.
+pub fn parse_cargo_lock_str(content: &str) -> Result<Vec<String>> {
+    let parsed: toml::Value =
+        content.parse().map_err(|e| anyhow!("Failed to parse Cargo.lock: {e}"))?;
+    let Some(packages) = parsed.get("package").and_then(|p| p.as_array()) else {
+        return Ok(vec![]);
+    };
+    Ok(packages
+        .iter()
+        .filter_map(|pkg| pkg.get("name").and_then(|n| n.as_str()).map(String::from))
+        .collect())
+}
+
+/// Read and parse a `Cargo.lock` file from disk.
+/// See [`parse_cargo_lock_str`] for semantics.
+pub fn parse_cargo_lock(path: &Path) -> Result<Vec<String>> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("Failed to read {}: {e}", path.display()))?;
+    parse_cargo_lock_str(&content)
 }
 
 /// Given a list of file paths in the source archive, detect license files.
