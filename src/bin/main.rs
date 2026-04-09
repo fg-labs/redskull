@@ -303,7 +303,7 @@ fn set_crates_io_source(
     http_client: &reqwest::blocking::Client,
     dl_path: &str,
     checksum: &str,
-) -> Option<source::ExtractedSource> {
+) -> Result<Option<source::ExtractedSource>> {
     let url = format!("https://crates.io{dl_path}");
     match source::fetch_and_extract(http_client, &url) {
         Ok((computed, extracted)) => {
@@ -325,23 +325,22 @@ fn set_crates_io_source(
                 &computed
             };
             builder.crates_io_source(dl_path, final_checksum);
-            Some(extracted)
+            Ok(Some(extracted))
         }
         Err(e) => {
+            if !source::is_valid_sha256(checksum) {
+                return Err(anyhow::anyhow!(
+                    "Failed to download crates.io archive for {dl_path}: {e}; \
+                     and the crates.io-provided checksum '{checksum}' is not a valid SHA256. \
+                     Refusing to emit a recipe with an invalid sha256."
+                ));
+            }
             log::warn!(
                 "Failed to download/extract crates.io archive for {dl_path}: {e}. \
                  Falling back to the crates.io-provided checksum without transitive dep detection."
             );
-            if source::is_valid_sha256(checksum) {
-                builder.crates_io_source(dl_path, checksum);
-            } else {
-                log::warn!(
-                    "Invalid SHA256 from crates.io for {dl_path} (got '{checksum}') \
-                     and download failed; recipe will have an invalid sha256."
-                );
-                builder.crates_io_source(dl_path, checksum);
-            }
-            None
+            builder.crates_io_source(dl_path, checksum);
+            Ok(None)
         }
     }
 }
@@ -443,7 +442,7 @@ fn redskull_from_opts(opts: &Opts) -> Result<()> {
         let extracted_source: Option<source::ExtractedSource> = if opts.source
             == SourceType::CratesIo
         {
-            set_crates_io_source(&mut builder, &http_client, &version.dl_path, &version.checksum)
+            set_crates_io_source(&mut builder, &conda_client, &version.dl_path, &version.checksum)?
         } else if let Some(ref repo_url) = crate_data.repository {
             if let Ok(repo) = GitHubRepo::from_url(repo_url) {
                 let tag_override = opts.github_release_tag.as_deref();
@@ -467,23 +466,23 @@ fn redskull_from_opts(opts: &Opts) -> Result<()> {
                         );
                         set_crates_io_source(
                             &mut builder,
-                            &http_client,
+                            &conda_client,
                             &version.dl_path,
                             &version.checksum,
-                        )
+                        )?
                     }
                 }
             } else {
                 // Not a GitHub URL, fall back to crates.io
                 set_crates_io_source(
                     &mut builder,
-                    &http_client,
+                    &conda_client,
                     &version.dl_path,
                     &version.checksum,
-                )
+                )?
             }
         } else {
-            set_crates_io_source(&mut builder, &http_client, &version.dl_path, &version.checksum)
+            set_crates_io_source(&mut builder, &conda_client, &version.dl_path, &version.checksum)?
         };
 
         // Resolve effective dep list (prefers Cargo.lock, falls back to direct deps).
