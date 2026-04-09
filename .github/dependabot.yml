@@ -15,8 +15,9 @@ updates:
       - dependencies
       - rust
     groups:
-      cargo-minor-and-patch:
+      cargo-all:
         update-types:
+          - major
           - minor
           - patch
 
@@ -37,5 +38,6 @@ updates:
     groups:
       github-actions:
         update-types:
+          - major
           - minor
           - patch
