@@ -8,7 +8,7 @@ use crates_io_api::SyncClient;
 use env_logger::Env;
 use redskull_lib::conda;
 use redskull_lib::crate_inspector::{
-    CargoMetadata, detect_license_files, resolve_workspace_members,
+    CargoMetadata, detect_license_files, parse_cargo_lock, resolve_workspace_members,
 };
 use redskull_lib::github_graphql;
 use redskull_lib::recipe_builder::RecipeBuilder;
@@ -233,28 +233,107 @@ fn verify_host_deps(
     }
 }
 
-/// Set crates.io source on the builder, recomputing SHA256 if the checksum is invalid.
+/// Resolve the effective dependency list to feed into sys-dep detection.
+///
+/// Prefers the full resolved graph from `Cargo.lock` if one exists in `source_root`.
+/// This catches transitive `-sys` crates (e.g., `openssl-sys` pulled in through `reqwest`),
+/// which direct-dependency inspection misses.
+///
+/// Falls back to `direct_deps` with a warning when no lockfile is present (for example,
+/// when crates.io `.crate` tarballs for library-only crates don't ship a `Cargo.lock`).
+/// The returned vec owns the strings; call sites should take `&[&str]` views into it.
+fn resolve_effective_deps(
+    source_root: Option<&std::path::Path>,
+    direct_deps: &[String],
+    crate_label: &str,
+) -> Vec<String> {
+    let Some(root) = source_root else {
+        log::warn!(
+            "No extracted source tree for {crate_label}; \
+             using direct dependencies only (may miss transitive -sys crates)"
+        );
+        return direct_deps.to_vec();
+    };
+    let lock_path = root.join("Cargo.lock");
+    if !lock_path.exists() {
+        log::warn!(
+            "No Cargo.lock in {} for {crate_label}; \
+             using direct dependencies only (may miss transitive -sys crates)",
+            root.display()
+        );
+        return direct_deps.to_vec();
+    }
+    match parse_cargo_lock(&lock_path) {
+        Ok(mut names) => {
+            log::info!(
+                "Resolved {} packages from Cargo.lock for {crate_label} (transitive graph)",
+                names.len()
+            );
+            names.sort();
+            names.dedup();
+            names
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to parse {} for {crate_label}: {e}. Falling back to direct deps.",
+                lock_path.display()
+            );
+            direct_deps.to_vec()
+        }
+    }
+}
+
+/// Set the crates.io source on the builder, downloading and extracting the archive
+/// so the caller can inspect `Cargo.lock` for transitive dependency detection.
+///
+/// The crates.io-provided checksum is used when valid; otherwise the hash is
+/// recomputed from the downloaded bytes. Returns the extracted source tree when
+/// download + extraction succeeds, or `None` on any failure (the recipe is still
+/// populated with the best checksum we have).
 fn set_crates_io_source(
     builder: &mut RecipeBuilder,
     http_client: &reqwest::blocking::Client,
     dl_path: &str,
     checksum: &str,
-) {
-    if source::is_valid_sha256(checksum) {
-        builder.crates_io_source(dl_path, checksum);
-    } else {
-        log::warn!(
-            "Invalid SHA256 from crates.io for {dl_path} (got '{checksum}'). Recomputing..."
-        );
-        let url = format!("https://crates.io{dl_path}");
-        match source::compute_sha256(http_client, &url) {
-            Ok((_bytes, hash)) => {
-                builder.crates_io_source(dl_path, &hash);
-            }
-            Err(e) => {
-                log::warn!("Failed to recompute SHA256: {e}. Using original checksum.");
+) -> Option<source::ExtractedSource> {
+    let url = format!("https://crates.io{dl_path}");
+    match source::fetch_and_extract(http_client, &url) {
+        Ok((computed, extracted)) => {
+            let final_checksum = if source::is_valid_sha256(checksum) {
+                if checksum != computed {
+                    log::warn!(
+                        "crates.io checksum '{checksum}' disagrees with computed '{computed}' \
+                         for {dl_path}; using computed value."
+                    );
+                    &computed
+                } else {
+                    checksum
+                }
+            } else {
+                log::warn!(
+                    "Invalid SHA256 from crates.io for {dl_path} (got '{checksum}'); \
+                     using computed value."
+                );
+                &computed
+            };
+            builder.crates_io_source(dl_path, final_checksum);
+            Some(extracted)
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to download/extract crates.io archive for {dl_path}: {e}. \
+                 Falling back to the crates.io-provided checksum without transitive dep detection."
+            );
+            if source::is_valid_sha256(checksum) {
+                builder.crates_io_source(dl_path, checksum);
+            } else {
+                log::warn!(
+                    "Invalid SHA256 from crates.io for {dl_path} (got '{checksum}') \
+                     and download failed; recipe will have an invalid sha256."
+                );
                 builder.crates_io_source(dl_path, checksum);
             }
+            None
         }
     }
 }
@@ -343,7 +422,66 @@ fn redskull_from_opts(opts: &Opts) -> Result<()> {
         };
         let version = &crate_data.versions[version_idx.unwrap_or(0)];
         log::info!("Resolved {} v{}", crate_data.id, version_str);
-        let dep_names: Vec<&str> = dep_list.iter().map(|d| d.crate_id.as_str()).collect();
+        let direct_dep_names: Vec<String> = dep_list.iter().map(|d| d.crate_id.clone()).collect();
+
+        // Build recipe
+        let recipe_name = opts.recipe_name.as_deref().unwrap_or(&crate_data.id);
+        let mut builder = RecipeBuilder::new(recipe_name, &version_str);
+
+        // Source URL + resolve GitHub repo info for Cargo.toml fetching.
+        // We also capture an extracted source tree (from crates.io or GitHub) to
+        // parse Cargo.lock for transitive dependency detection.
+        let mut github_info: Option<(GitHubRepo, String)> = None;
+        let extracted_source: Option<source::ExtractedSource> = if opts.source
+            == SourceType::CratesIo
+        {
+            set_crates_io_source(&mut builder, &http_client, &version.dl_path, &version.checksum)
+        } else if let Some(ref repo_url) = crate_data.repository {
+            if let Ok(repo) = GitHubRepo::from_url(repo_url) {
+                let tag_override = opts.github_release_tag.as_deref();
+                match source::resolve_github_source(
+                    &http_client,
+                    &repo,
+                    &version_str,
+                    tag_override,
+                    opts.refs_tags,
+                ) {
+                    Ok(mut resolved) => {
+                        builder.github_source_resolved(&resolved.url_template, &resolved.sha256);
+                        github_info = Some((repo, resolved.tag));
+                        resolved.extracted.take()
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Could not resolve GitHub archive for {}: {e}. \
+                                 Falling back to crates.io.",
+                            crate_data.id
+                        );
+                        set_crates_io_source(
+                            &mut builder,
+                            &http_client,
+                            &version.dl_path,
+                            &version.checksum,
+                        )
+                    }
+                }
+            } else {
+                // Not a GitHub URL, fall back to crates.io
+                set_crates_io_source(
+                    &mut builder,
+                    &http_client,
+                    &version.dl_path,
+                    &version.checksum,
+                )
+            }
+        } else {
+            set_crates_io_source(&mut builder, &http_client, &version.dl_path, &version.checksum)
+        };
+
+        // Resolve effective dep list (prefers Cargo.lock, falls back to direct deps).
+        let source_root = extracted_source.as_ref().map(|e| e.root.as_path());
+        let effective_deps = resolve_effective_deps(source_root, &direct_dep_names, &crate_data.id);
+        let dep_names: Vec<&str> = effective_deps.iter().map(String::as_str).collect();
 
         // Detect host deps and compiler needs
         let host_deps = sys_deps::detect_host_deps(&dep_names);
@@ -356,55 +494,6 @@ fn redskull_from_opts(opts: &Opts) -> Result<()> {
 
         // Verify detected host deps exist on conda-forge
         verify_host_deps(&conda_client, conda_channel, &host_deps, &opts.host_dep);
-
-        // Build recipe
-        let recipe_name = opts.recipe_name.as_deref().unwrap_or(&crate_data.id);
-        let mut builder = RecipeBuilder::new(recipe_name, &version_str);
-
-        // Source URL + resolve GitHub repo info for Cargo.toml fetching
-        let mut github_info: Option<(GitHubRepo, String)> = None;
-        if opts.source == SourceType::CratesIo {
-            set_crates_io_source(&mut builder, &http_client, &version.dl_path, &version.checksum);
-        } else if let Some(ref repo_url) = crate_data.repository {
-            if let Ok(repo) = GitHubRepo::from_url(repo_url) {
-                let tag_override = opts.github_release_tag.as_deref();
-                match source::resolve_github_source(
-                    &http_client,
-                    &repo,
-                    &version_str,
-                    tag_override,
-                    opts.refs_tags,
-                ) {
-                    Ok(resolved) => {
-                        builder.github_source_resolved(&resolved.url_template, &resolved.sha256);
-                        github_info = Some((repo, resolved.tag));
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Could not resolve GitHub archive for {}: {e}. \
-                             Falling back to crates.io.",
-                            crate_data.id
-                        );
-                        set_crates_io_source(
-                            &mut builder,
-                            &http_client,
-                            &version.dl_path,
-                            &version.checksum,
-                        );
-                    }
-                }
-            } else {
-                // Not a GitHub URL, fall back to crates.io
-                set_crates_io_source(
-                    &mut builder,
-                    &http_client,
-                    &version.dl_path,
-                    &version.checksum,
-                );
-            }
-        } else {
-            set_crates_io_source(&mut builder, &http_client, &version.dl_path, &version.checksum);
-        }
 
         // Metadata
         if let Some(ref license) = crate_data.license {
@@ -542,8 +631,15 @@ fn redskull_from_opts(opts: &Opts) -> Result<()> {
         } else {
             authors.names
         };
-        for name in names.into_iter().filter(|n| !n.starts_with("github:")) {
-            builder.add_maintainer(&name);
+        // CLI --maintainers overrides crates.io-derived authors when non-empty.
+        if opts.maintainers.is_empty() {
+            for name in names.into_iter().filter(|n| !n.starts_with("github:")) {
+                builder.add_maintainer(&name);
+            }
+        } else {
+            for name in &opts.maintainers {
+                builder.add_maintainer(name);
+            }
         }
 
         // Build flags
@@ -676,9 +772,11 @@ fn process_github_only(
     log::info!("Fetching repo metadata via GraphQL...");
     let discovery = github_graphql::discover_repo(http_client, repo, &tag);
 
-    // Resolve source archive and SHA256 (must stay REST — downloads the tarball)
-    let resolved =
+    // Resolve source archive and SHA256 (must stay REST — downloads the tarball).
+    // This also extracts the archive so we can inspect `Cargo.lock` for transitive deps.
+    let mut resolved =
         source::resolve_github_source(http_client, repo, &version_str, Some(&tag), opts.refs_tags)?;
+    let extracted_source = resolved.extracted.take();
 
     // Extract root Cargo.toml from GraphQL or fall back to REST
     let root_toml_str = if let Ok(ref disc) = discovery {
@@ -823,14 +921,18 @@ fn process_github_only(
         builder.add_binary(bin);
     }
 
-    // Dependencies -> detect host deps and compiler needs
-    let all_deps: Vec<String> = pkg_meta
+    // Dependencies -> detect host deps and compiler needs.
+    // Prefer Cargo.lock (the full resolved graph) to catch transitive `-sys` crates;
+    // fall back to direct Cargo.toml deps when no lockfile is available.
+    let direct_deps: Vec<String> = pkg_meta
         .dependencies()
         .into_iter()
         .map(|(name, _)| name)
         .chain(pkg_meta.build_dependencies())
         .collect();
-    let dep_names: Vec<&str> = all_deps.iter().map(|s| s.as_str()).collect();
+    let source_root = extracted_source.as_ref().map(|e| e.root.as_path());
+    let effective_deps = resolve_effective_deps(source_root, &direct_deps, &recipe_name);
+    let dep_names: Vec<&str> = effective_deps.iter().map(String::as_str).collect();
     let host_deps = sys_deps::detect_host_deps(&dep_names);
     let has_c = sys_deps::needs_c_compiler(&dep_names);
     let has_cxx = sys_deps::needs_cxx_compiler(&dep_names);
@@ -910,6 +1012,9 @@ fn process_github_only(
     }
     for id in &opts.identifier {
         builder.add_identifier(id);
+    }
+    for name in &opts.maintainers {
+        builder.add_maintainer(name);
     }
 
     let (recipe, script) = builder.build();

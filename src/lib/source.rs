@@ -1,8 +1,13 @@
 //! Source URL generation and sha256 computation.
 
 use anyhow::{Result, anyhow};
+use flate2::read::GzDecoder;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
+use std::io::Cursor;
+use std::path::PathBuf;
+use tar::Archive;
+use tempfile::TempDir;
 
 /// Parsed GitHub repository info.
 pub struct GitHubRepo {
@@ -45,6 +50,8 @@ pub struct ResolvedGitHubSource {
     pub sha256: String,
     /// The resolved tag (e.g., "v0.3.1" or "0.3.1").
     pub tag: String,
+    /// Extracted source tree. Cleaned up when dropped.
+    pub extracted: Option<ExtractedSource>,
 }
 
 /// Try to resolve the correct GitHub archive URL and compute its SHA256.
@@ -78,6 +85,7 @@ pub fn resolve_github_source(
 /// Resolve a GitHub source using a specific tag.
 /// Tries the public archive URL first, then falls back to the API tarball endpoint
 /// (which works for private repos when GITHUB_TOKEN is set).
+/// Downloads the archive, computes the sha256, and extracts the source tree.
 fn resolve_with_tag(
     client: &Client,
     repo: &GitHubRepo,
@@ -112,6 +120,15 @@ fn resolve_with_tag(
     };
     let hash = sha256_hex(&bytes);
 
+    // Extract so callers can inspect Cargo.lock and the rest of the source tree.
+    let extracted = match extract_tar_gz(&bytes) {
+        Ok(e) => Some(e),
+        Err(e) => {
+            log::warn!("Failed to extract GitHub archive for {}/{tag}: {e}", repo.name);
+            None
+        }
+    };
+
     let archive_base = if use_refs_tags { "archive/refs/tags" } else { "archive" };
 
     // Build URL template: replace the version portion of the tag with {{ version }}
@@ -127,7 +144,12 @@ fn resolve_with_tag(
         repo.owner, repo.name
     );
 
-    Ok(ResolvedGitHubSource { url_template: template, sha256: hash, tag: tag.to_string() })
+    Ok(ResolvedGitHubSource {
+        url_template: template,
+        sha256: hash,
+        tag: tag.to_string(),
+        extracted,
+    })
 }
 
 /// Compute SHA256 hex digest from bytes.
@@ -339,4 +361,50 @@ pub fn compute_sha256(client: &Client, url: &str) -> Result<(Vec<u8>, String)> {
     let bytes = response.bytes()?;
     let hash = sha256_hex(&bytes);
     Ok((bytes.to_vec(), hash))
+}
+
+/// An extracted crate source tree in a temporary directory.
+///
+/// Owns a `TempDir` that is cleaned up on drop. `root` is the actual crate root
+/// (the single top-level directory inside the archive, where `Cargo.toml` lives).
+pub struct ExtractedSource {
+    #[allow(dead_code)]
+    tmp: TempDir,
+    /// The path to the crate root inside the tempdir.
+    pub root: PathBuf,
+}
+
+/// Extract a gzipped tarball (bytes) into a new temp directory and return the
+/// path to the single top-level directory inside it (the "crate root").
+///
+/// Most tarballs from crates.io and GitHub have exactly one top-level directory;
+/// if there are multiple or none, the tempdir root is returned.
+pub fn extract_tar_gz(bytes: &[u8]) -> Result<ExtractedSource> {
+    let tmp = tempfile::Builder::new().prefix("redskull-src-").tempdir()?;
+    let mut archive = Archive::new(GzDecoder::new(Cursor::new(bytes)));
+    archive.unpack(tmp.path())?;
+
+    // Find the single top-level directory (typical for github/crates.io archives).
+    let mut entries: Vec<PathBuf> =
+        std::fs::read_dir(tmp.path())?.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    entries.sort();
+    let root = if entries.len() == 1 && entries[0].is_dir() {
+        entries.remove(0)
+    } else {
+        tmp.path().to_path_buf()
+    };
+    Ok(ExtractedSource { tmp, root })
+}
+
+/// Download a tarball, compute its sha256, and extract it to a temp directory.
+/// Returns the hash and the extracted source tree.
+pub fn fetch_and_extract(client: &Client, url: &str) -> Result<(String, ExtractedSource)> {
+    let resp = client.get(url).send()?;
+    if !resp.status().is_success() {
+        return Err(anyhow!("Failed to download {url}: HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes()?;
+    let hash = sha256_hex(&bytes);
+    let extracted = extract_tar_gz(&bytes)?;
+    Ok((hash, extracted))
 }
