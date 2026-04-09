@@ -1043,8 +1043,11 @@ fn test_needs_cxx_compiler_htslib() {
 }
 
 #[test]
-fn test_needs_cxx_compiler_libgit2() {
-    assert!(sys_deps::needs_cxx_compiler(&["libgit2-sys", "serde"]));
+fn test_libgit2_does_not_require_cxx_or_cmake() {
+    // libgit2 is pure C; libgit2-sys uses pkg-config to find the system lib.
+    assert!(!sys_deps::needs_cxx_compiler(&["libgit2-sys", "serde"]));
+    assert!(!sys_deps::needs_cmake(&["libgit2-sys", "serde"]));
+    assert!(sys_deps::needs_pkg_config(&["libgit2-sys"]));
 }
 
 // --- Workspace binary name fallback ---
