@@ -307,6 +307,21 @@ fn test_requirements_with_cxx_deps() {
     assert!(names.contains(&"{{ compiler('rust') }}"));
 }
 
+/// Exercise the C++-only branch (no C deps). The stdlib('c') requirement must
+/// still appear — bioconda's `compiler_needs_stdlib_c` lint requires it whenever
+/// any C/C++ compiler is present — and `compiler('c')` must NOT be added when
+/// only C++ is requested.
+#[test]
+fn test_requirements_with_cxx_only_deps() {
+    let no_tools = BuildToolNeeds { pkg_config: false, make: false, cmake: false };
+    let reqs = Requirements::for_rust_crate(false, false, true, false, &no_tools);
+    let names: Vec<&str> = reqs.build.iter().map(|r| r.name.as_str()).collect();
+    assert!(!names.contains(&"{{ compiler('c') }}"), "cxx-only must not add compiler('c')");
+    assert!(names.contains(&"{{ compiler('cxx') }}"));
+    assert!(names.contains(&"{{ stdlib('c') }}"), "C++ still needs stdlib('c') for bioconda lint");
+    assert!(names.contains(&"{{ compiler('rust') }}"));
+}
+
 #[test]
 fn test_requirements_with_bindgen_adds_clangdev() {
     let no_tools = BuildToolNeeds { pkg_config: false, make: false, cmake: false };

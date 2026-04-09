@@ -233,6 +233,14 @@ fn verify_host_deps(
     }
 }
 
+/// Build a README doc_url on GitHub for the given repo at the given tag,
+/// with the version portion of the tag replaced by the jinja `{{ version }}`
+/// placeholder so the URL auto-updates across releases.
+fn build_readme_doc_url(repo: &GitHubRepo, tag: &str, version: &str) -> String {
+    let template_tag = source::tag_to_jinja_template(tag, version);
+    format!("https://github.com/{}/{}/blob/{template_tag}/README.md", repo.owner, repo.name)
+}
+
 /// Resolve the effective dependency list to feed into sys-dep detection.
 ///
 /// Prefers the full resolved graph from `Cargo.lock` if one exists in `source_root`.
@@ -512,12 +520,7 @@ fn redskull_from_opts(opts: &Opts) -> Result<()> {
             builder.documentation(docs);
         } else if let Some((ref repo, ref tag)) = github_info {
             // Fall back to repo README for doc_url, with `{{ version }}` jinja placeholder
-            let template_tag = source::tag_to_jinja_template(tag, &version_str);
-            let doc_url = format!(
-                "https://github.com/{}/{}/blob/{template_tag}/README.md",
-                repo.owner, repo.name
-            );
-            builder.documentation(&doc_url);
+            builder.documentation(&build_readme_doc_url(repo, tag, &version_str));
         }
 
         // Binary names + workspace detection from GitHub Cargo.toml
@@ -902,12 +905,7 @@ fn process_github_only(
         builder.documentation(&doc_url);
     } else {
         // Fall back to repo README for doc_url, with `{{ version }}` jinja placeholder
-        let template_tag = source::tag_to_jinja_template(&tag, &version_str);
-        let doc_url = format!(
-            "https://github.com/{}/{}/blob/{template_tag}/README.md",
-            repo.owner, repo.name
-        );
-        builder.documentation(&doc_url);
+        builder.documentation(&build_readme_doc_url(repo, &tag, &version_str));
     }
 
     // Workspace path
