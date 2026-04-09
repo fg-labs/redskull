@@ -116,7 +116,15 @@ impl BuildScript {
         if self.native_deps {
             out.push_str("export CPPFLAGS=\"${CPPFLAGS} -I${PREFIX}/include\"\n");
             out.push_str("export LDFLAGS=\"${LDFLAGS} -L${PREFIX}/lib\"\n");
-            out.push_str("export CFLAGS=\"${CFLAGS} -O3\"\n\n");
+            out.push_str("export CFLAGS=\"${CFLAGS} -O3\"\n");
+            // Allow Cargo build scripts that link against host libs (e.g. libgit2)
+            // to find them at build time, before conda-build's prefix replacement.
+            out.push_str(
+                "export LD_LIBRARY_PATH=\"${PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}\"\n",
+            );
+            out.push_str(
+                "export DYLD_FALLBACK_LIBRARY_PATH=\"${PREFIX}/lib${DYLD_FALLBACK_LIBRARY_PATH:+:${DYLD_FALLBACK_LIBRARY_PATH}}\"\n\n",
+            );
         }
 
         if self.use_bindgen {
