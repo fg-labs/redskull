@@ -1,7 +1,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use clap::builder::styling;
 use clap::{ColorChoice, Parser as ClapParser, ValueEnum};
 use crates_io_api::SyncClient;
@@ -65,6 +65,7 @@ const STYLES: styling::Styles = styling::Styles::styled()
     name = "redskull",
     color = ColorChoice::Auto,
     styles = STYLES,
+    arg_required_else_help = true,
     version = built_info::VERSION.as_str())
  ]
 #[allow(clippy::struct_excessive_bools)]
@@ -76,10 +77,6 @@ struct Opts {
     /// Path to where the recipe will be created.
     #[clap(long)]
     output: Option<PathBuf>,
-
-    /// Recursively run grayskull on missing dependencies.
-    #[clap(long, short = 'r', default_value = "false")]
-    recursive: bool,
 
     /// If tag is specified, Redskull will build from release tag
     #[clap(long = "tag")]
@@ -159,6 +156,7 @@ struct Opts {
     workspace_path: Option<String>,
 
     /// Crates.io package names or GitHub URLs.
+    #[clap(required = true)]
     args: Vec<String>,
 }
 
@@ -347,9 +345,6 @@ fn set_crates_io_source(
 
 #[allow(clippy::too_many_lines)]
 fn redskull_from_opts(opts: &Opts) -> Result<()> {
-    ensure!(!opts.args.is_empty(), "No packages given. Please specify at least one crate.");
-    ensure!(!opts.recursive, "Recursive dependency resolution is not yet implemented.");
-
     let user_agent =
         format!("redskull/{} (https://github.com/fg-labs/redskull)", built_info::VERSION.as_str());
     let timeout = std::time::Duration::from_secs(30);
@@ -1029,4 +1024,30 @@ fn setup() -> Opts {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     Opts::parse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Opts;
+    use clap::Parser;
+
+    #[test]
+    fn parse_fails_when_no_args_at_all() {
+        // arg_required_else_help triggers: no arguments -> help printed, parse errors.
+        assert!(Opts::try_parse_from(["redskull"]).is_err());
+    }
+
+    #[test]
+    fn parse_fails_when_only_flags_given_without_positional() {
+        // Regression: previously arg_required_else_help alone allowed clap to parse
+        // successfully with an empty `args` vec when only flags were passed, causing
+        // a silent no-op exit. The positional must be `required` to catch this.
+        assert!(Opts::try_parse_from(["redskull", "--bioconda"]).is_err());
+    }
+
+    #[test]
+    fn parse_succeeds_with_positional_crate_name() {
+        let opts = Opts::try_parse_from(["redskull", "serde"]).expect("should parse");
+        assert_eq!(opts.args, vec!["serde".to_string()]);
+    }
 }
