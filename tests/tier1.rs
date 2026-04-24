@@ -277,7 +277,9 @@ fn test_pure_rust_requirements() {
     assert!(names.contains(&"{{ compiler('rust') }}"));
     assert!(!names.contains(&"{{ compiler('c') }}"), "pure Rust should not include compiler('c')");
     assert!(!names.contains(&"{{ compiler('cxx') }}"));
-    assert!(!names.contains(&"{{ stdlib('c') }}"), "pure Rust should not include stdlib('c')");
+    // bioconda's compiler_needs_stdlib_c lint requires stdlib('c') alongside any
+    // compiler(...), including compiler('rust').
+    assert!(names.contains(&"{{ stdlib('c') }}"), "compiler('rust') requires stdlib('c')");
     assert!(!names.contains(&"cargo-bundle-licenses"));
     assert!(!names.contains(&"clangdev"));
     assert!(!names.contains(&"pkg-config"));
@@ -410,6 +412,26 @@ fn test_builder_crates_io_source() {
     assert!(output.contains("abc123sha"), "should use provided SHA");
     assert!(!output.contains("github.com"), "should not reference GitHub");
     assert!(output.contains("fqtk --help"), "binary test command");
+    // URL must use {{ version }} jinja placeholder so it auto-updates on version bumps
+    // (bioconda rejects URLs that hardcode the version).
+    assert!(
+        output.contains("https://crates.io/api/v1/crates/fqtk/{{ version }}/download"),
+        "crates.io URL should template the version segment"
+    );
+    assert!(
+        !output.contains("/api/v1/crates/fqtk/0.3.1/download"),
+        "crates.io URL should not hardcode the version"
+    );
+}
+
+// If the crates.io dl_path format ever drifts and the version segment can't be found,
+// silently hardcoding the version would ship a recipe that fails bioconda lint.
+// The `debug_assert!` in `crates_io_source` catches this in debug builds / tests.
+#[test]
+#[should_panic(expected = "does not contain version segment")]
+fn test_builder_crates_io_source_panics_when_version_segment_missing() {
+    let mut builder = RecipeBuilder::new("fqtk", "0.3.1");
+    builder.crates_io_source("/api/v1/crates/fqtk/download", "abc123sha");
 }
 
 #[test]

@@ -103,7 +103,21 @@ impl RecipeBuilder {
     }
 
     pub fn crates_io_source(&mut self, dl_path: &str, sha256: &str) -> &mut Self {
-        self.source_url = format!("https://crates.io{dl_path}");
+        // Replace the resolved version segment with the `{{ version }}` jinja
+        // placeholder so the URL auto-updates across version bumps — bioconda
+        // lints reject URLs that hardcode the version. The crate-name segment
+        // stays literal since the recipe `name` may differ (via --recipe-name).
+        let needle = format!("/{}/", self.version);
+        // Guard against drift in the crates.io `dl_path` format: `replacen` returns
+        // the input unchanged if the needle isn't present, which would silently ship
+        // a URL that hardcodes the version and fails bioconda lint.
+        debug_assert!(
+            dl_path.contains(&needle),
+            "crates_io_source: dl_path {dl_path:?} does not contain version segment {needle:?}; \
+             templated URL would hardcode the version and fail bioconda lint"
+        );
+        let templated = dl_path.replacen(&needle, "/{{ version }}/", 1);
+        self.source_url = format!("https://crates.io{templated}");
         self.source_filename = format!("{}.{{{{ version }}}}.tar.gz", self.name);
         self.source_sha256 = sha256.to_string();
         self
