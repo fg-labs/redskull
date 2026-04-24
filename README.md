@@ -44,10 +44,10 @@ redskull: grayskull for rust.
 
 Specify the crates.io packages name. Redskull can also accept a github url.
 
-Usage: redskull [OPTIONS] [ARGS]...
+Usage: redskull [OPTIONS] <ARGS>...
 
 Arguments:
-  [ARGS]...
+  <ARGS>...
           Crates.io package names or GitHub URLs
 
 Options:
@@ -56,9 +56,6 @@ Options:
 
       --output <OUTPUT>
           Path to where the recipe will be created
-
-  -r, --recursive
-          Recursively run grayskull on missing dependencies
 
       --tag <GITHUB_RELEASE_TAG>
           If tag is specified, Redskull will build from release tag
