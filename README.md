@@ -1,7 +1,7 @@
 # redskull
 
 <p align="center">
-  <img src="images/logo.svg" alt="redskull logo" width="400">
+  <img src="https://raw.githubusercontent.com/fg-labs/redskull/main/images/logo.svg" alt="redskull logo" width="400">
 </p>
 
 <p align="center">
@@ -17,9 +17,9 @@ A conda recipe generator for Rust crates, written in Rust.
 <p>
 <a href="https://fulcrumgenomics.com">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/logos/fulcrumgenomics-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset=".github/logos/fulcrumgenomics-light.svg">
-  <img alt="Fulcrum Genomics" src=".github/logos/fulcrumgenomics-light.svg" height="100">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/fg-labs/redskull/main/.github/logos/fulcrumgenomics-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/fg-labs/redskull/main/.github/logos/fulcrumgenomics-light.svg">
+  <img alt="Fulcrum Genomics" src="https://raw.githubusercontent.com/fg-labs/redskull/main/.github/logos/fulcrumgenomics-light.svg" height="100">
 </picture>
 </a>
 </p>
