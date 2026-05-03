@@ -97,7 +97,7 @@ impl Requirements {
     /// * `cargo_bundle_licenses` - include CBL in build deps
     /// * `has_c_deps` - crate links C code (adds compiler('c'))
     /// * `has_cxx_deps` - crate links C++ code (adds compiler('cxx'))
-    /// * `has_bindgen` - crate uses bindgen (adds clangdev)
+    /// * `has_bindgen` - crate uses bindgen (adds clangdev and compiler('c'))
     /// * `build_tools` - which build tools to include (pkg-config, make, cmake)
     pub fn for_rust_crate(
         cargo_bundle_licenses: bool,
@@ -108,7 +108,11 @@ impl Requirements {
     ) -> Self {
         let mut build = vec![];
 
-        if has_c_deps {
+        // bindgen invokes a C compiler on wrapper headers at build time, so
+        // any recipe that pulls in clangdev must also expose `compiler('c')`.
+        // Bioconda recipes that emit `clangdev` without `compiler('c')` fail
+        // the `should_use_compilers` lint.
+        if has_c_deps || has_bindgen {
             build.push(Requirement::simple("{{ compiler('c') }}"));
         }
         if has_cxx_deps {

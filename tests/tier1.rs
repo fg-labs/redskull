@@ -330,6 +330,40 @@ fn test_requirements_with_bindgen_adds_clangdev() {
     let reqs = Requirements::for_rust_crate(false, false, false, true, &no_tools);
     let names: Vec<&str> = reqs.build.iter().map(|r| r.name.as_str()).collect();
     assert!(names.contains(&"clangdev"));
+    // bindgen invokes a C compiler on wrapper headers, so compiler('c') must
+    // accompany clangdev; bioconda's `should_use_compilers` lint rejects
+    // recipes that ship clangdev without it.
+    assert!(
+        names.contains(&"{{ compiler('c') }}"),
+        "bindgen requires compiler('c'); got: {names:?}"
+    );
+}
+
+/// Regression for issue #17: a `--bioconda` recipe with bindgen-pulling
+/// dependencies must emit `compiler('c')` alongside `clangdev`, not silently
+/// drop it.
+#[test]
+fn test_bioconda_recipe_with_bindgen_emits_compiler_c() {
+    let mut builder = RecipeBuilder::new("tricord", "0.1.0");
+    builder
+        .github_source("fg-labs", "tricord", "deadbeef")
+        .license("MIT")
+        .add_binary("tricorder")
+        .bioconda(true)
+        .cargo_bundle_licenses(true)
+        .needs_bindgen(true);
+
+    let (recipe, _script) = builder.build();
+    let output = MetaYamlRenderer.render(&recipe);
+
+    assert_contains(&output, "{{ compiler('c') }}", "bindgen recipe must emit compiler('c')");
+    assert_contains(&output, "{{ stdlib('c') }}", "bindgen recipe must emit stdlib('c')");
+    assert_contains(&output, "clangdev", "bindgen recipe must emit clangdev");
+
+    // compiler('c') must appear before stdlib('c') to match bioconda convention.
+    let cc_pos = output.find("{{ compiler('c') }}").expect("compiler('c') present");
+    let stdlib_pos = output.find("{{ stdlib('c') }}").expect("stdlib('c') present");
+    assert!(cc_pos < stdlib_pos, "compiler('c') must appear before stdlib('c')");
 }
 
 #[test]
