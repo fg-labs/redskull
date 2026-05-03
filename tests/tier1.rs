@@ -412,26 +412,97 @@ fn test_builder_crates_io_source() {
     assert!(output.contains("abc123sha"), "should use provided SHA");
     assert!(!output.contains("github.com"), "should not reference GitHub");
     assert!(output.contains("fqtk --help"), "binary test command");
-    // URL must use {{ version }} jinja placeholder so it auto-updates on version bumps
-    // (bioconda rejects URLs that hardcode the version).
+    // URL must use both `{{ name }}` and `{{ version }}` jinja placeholders so the
+    // recipe template stays DRY and auto-updates on version bumps (bioconda rejects
+    // URLs that hardcode the version).
     assert!(
-        output.contains("https://crates.io/api/v1/crates/fqtk/{{ version }}/download"),
-        "crates.io URL should template the version segment"
+        output.contains("https://crates.io/api/v1/crates/{{ name }}/{{ version }}/download"),
+        "crates.io URL should template the crate-name and version segments"
     );
     assert!(
         !output.contains("/api/v1/crates/fqtk/0.3.1/download"),
         "crates.io URL should not hardcode the version"
     );
+    assert!(
+        !output.contains("/api/v1/crates/fqtk/{{ version }}/download"),
+        "crates.io URL should not hardcode the crate name when it matches the recipe name"
+    );
 }
 
 // If the crates.io dl_path format ever drifts and the version segment can't be found,
 // silently hardcoding the version would ship a recipe that fails bioconda lint.
-// The `debug_assert!` in `crates_io_source` catches this in debug builds / tests.
+// The `assert!` in `crates_io_source` catches this in all builds.
 #[test]
 #[should_panic(expected = "does not contain version segment")]
 fn test_builder_crates_io_source_panics_when_version_segment_missing() {
     let mut builder = RecipeBuilder::new("fqtk", "0.3.1");
     builder.crates_io_source("/api/v1/crates/fqtk/download", "abc123sha");
+}
+
+/// Regression for issue #19: the GitHub `source.url` should reuse `{{ name }}`
+/// when the recipe name matches the repo path segment. Bioconda recipes
+/// hardcoding the crate name in the URL fail the DRY-template convention.
+#[test]
+fn test_builder_github_url_templates_name_when_matching() {
+    let mut builder = RecipeBuilder::new("tricord", "0.1.0");
+    builder.github_source("fg-labs", "tricord", "deadbeef").license("MIT").add_binary("tricorder");
+
+    let (recipe, _script) = builder.build();
+    let output = MetaYamlRenderer.render(&recipe);
+
+    assert_contains(
+        &output,
+        "https://github.com/fg-labs/{{ name }}/archive/v{{ version }}.tar.gz",
+        "GitHub URL should template the recipe-name segment",
+    );
+    assert!(
+        !output.contains("github.com/fg-labs/tricord/"),
+        "GitHub URL should not hardcode the recipe name as a path segment"
+    );
+}
+
+/// Regression for issue #19 (negative case): when the recipe name and the
+/// upstream repo name differ — typically because `--recipe-name` was used —
+/// the URL must keep the literal repo name so it still resolves on GitHub.
+#[test]
+fn test_builder_github_url_keeps_repo_name_when_recipe_name_differs() {
+    let mut builder = RecipeBuilder::new("ska2", "0.3.12");
+    builder.github_source("bacpop", "ska.rust", "deadbeef").license("MIT").add_binary("ska");
+
+    let (recipe, _script) = builder.build();
+    let output = MetaYamlRenderer.render(&recipe);
+
+    assert_contains(
+        &output,
+        "https://github.com/bacpop/ska.rust/archive/v{{ version }}.tar.gz",
+        "differing repo name must stay literal",
+    );
+    assert!(
+        !output.contains("{{ name }}/archive"),
+        "should not template the URL when the recipe name doesn't match the repo path"
+    );
+}
+
+/// Regression for issue #19: pre-resolved GitHub URL templates (the path
+/// `process_github_only` and `resolve_github_source` use) should be
+/// templatized too, including the `archive/refs/tags/...` form.
+#[test]
+fn test_builder_github_source_resolved_templates_name() {
+    let mut builder = RecipeBuilder::new("tricord", "0.1.0");
+    builder.github_source_resolved(
+        "https://github.com/fg-labs/tricord/archive/refs/tags/v{{ version }}.tar.gz",
+        "deadbeef",
+    );
+    builder.license("MIT").add_binary("tricorder");
+
+    let (recipe, _script) = builder.build();
+    let output = MetaYamlRenderer.render(&recipe);
+
+    assert_contains(
+        &output,
+        "https://github.com/fg-labs/{{ name }}/archive/refs/tags/v{{ version }}.tar.gz",
+        "refs/tags URL template should also be templated",
+    );
 }
 
 #[test]

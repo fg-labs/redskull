@@ -86,8 +86,8 @@ impl RecipeBuilder {
     }
 
     pub fn github_source(&mut self, owner: &str, repo: &str, sha256: &str) -> &mut Self {
-        self.source_url =
-            format!("https://github.com/{owner}/{repo}/archive/v{{{{ version }}}}.tar.gz");
+        let url = format!("https://github.com/{owner}/{repo}/archive/v{{{{ version }}}}.tar.gz");
+        self.source_url = templatize_recipe_name_segment(&url, &self.name);
         self.source_filename = format!("{}-{{{{ version }}}}.tar.gz", self.name);
         self.source_sha256 = sha256.to_string();
         self
@@ -96,7 +96,7 @@ impl RecipeBuilder {
     /// Set source from a pre-resolved GitHub URL template and SHA256.
     /// Use this when the URL template and SHA256 have been computed from the actual archive.
     pub fn github_source_resolved(&mut self, url_template: &str, sha256: &str) -> &mut Self {
-        self.source_url = url_template.to_string();
+        self.source_url = templatize_recipe_name_segment(url_template, &self.name);
         self.source_filename = format!("{}-{{{{ version }}}}.tar.gz", self.name);
         self.source_sha256 = sha256.to_string();
         self
@@ -106,18 +106,21 @@ impl RecipeBuilder {
         // Replace the resolved version segment with the `{{ version }}` jinja
         // placeholder so the URL auto-updates across version bumps — bioconda
         // lints reject URLs that hardcode the version. The crate-name segment
-        // stays literal since the recipe `name` may differ (via --recipe-name).
+        // is replaced with `{{ name }}` only when it matches the recipe name;
+        // when `--recipe-name` is set and the two differ, the literal crate
+        // name must stay so the URL still resolves on crates.io.
         let needle = format!("/{}/", self.version);
         // Guard against drift in the crates.io `dl_path` format: `replacen` returns
         // the input unchanged if the needle isn't present, which would silently ship
         // a URL that hardcodes the version and fails bioconda lint.
-        debug_assert!(
+        assert!(
             dl_path.contains(&needle),
             "crates_io_source: dl_path {dl_path:?} does not contain version segment {needle:?}; \
              templated URL would hardcode the version and fail bioconda lint"
         );
         let templated = dl_path.replacen(&needle, "/{{ version }}/", 1);
-        self.source_url = format!("https://crates.io{templated}");
+        let url = format!("https://crates.io{templated}");
+        self.source_url = templatize_recipe_name_segment(&url, &self.name);
         self.source_filename = format!("{}.{{{{ version }}}}.tar.gz", self.name);
         self.source_sha256 = sha256.to_string();
         self
@@ -393,5 +396,73 @@ impl RecipeBuilder {
         };
 
         (recipe, script)
+    }
+}
+
+/// Replace any path segment `/{name}/` in `url` with `/{{ name }}/` so the
+/// generated recipe reuses the `{% set name %}` Jinja variable instead of
+/// repeating the literal crate/recipe name. Only exact path-segment matches
+/// are substituted (the surrounding slashes are required), so domains and
+/// unrelated path components are never touched.
+///
+/// When the recipe name differs from the upstream crate/repo path segment
+/// (e.g. via `--recipe-name`), the URL is returned unchanged.
+fn templatize_recipe_name_segment(url: &str, recipe_name: &str) -> String {
+    if recipe_name.is_empty() {
+        return url.to_string();
+    }
+    let needle = format!("/{recipe_name}/");
+    url.replace(&needle, "/{{ name }}/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::templatize_recipe_name_segment;
+
+    #[test]
+    fn templatize_substitutes_github_repo_segment() {
+        let url = "https://github.com/fg-labs/tricord/archive/v{{ version }}.tar.gz";
+        assert_eq!(
+            templatize_recipe_name_segment(url, "tricord"),
+            "https://github.com/fg-labs/{{ name }}/archive/v{{ version }}.tar.gz",
+        );
+    }
+
+    #[test]
+    fn templatize_substitutes_refs_tags_url() {
+        let url = "https://github.com/foo/bar/archive/refs/tags/v{{ version }}.tar.gz";
+        assert_eq!(
+            templatize_recipe_name_segment(url, "bar"),
+            "https://github.com/foo/{{ name }}/archive/refs/tags/v{{ version }}.tar.gz",
+        );
+    }
+
+    #[test]
+    fn templatize_substitutes_crates_io_segment() {
+        let url = "https://crates.io/api/v1/crates/serde/{{ version }}/download";
+        assert_eq!(
+            templatize_recipe_name_segment(url, "serde"),
+            "https://crates.io/api/v1/crates/{{ name }}/{{ version }}/download",
+        );
+    }
+
+    #[test]
+    fn templatize_leaves_url_unchanged_when_segment_missing() {
+        // Recipe name doesn't appear as a full path segment.
+        let url = "https://github.com/fg-labs/tricord/archive/v{{ version }}.tar.gz";
+        assert_eq!(templatize_recipe_name_segment(url, "different-name"), url);
+    }
+
+    #[test]
+    fn templatize_does_not_match_partial_segment() {
+        // `tri` is a substring of `tricord` but not a full segment.
+        let url = "https://github.com/fg-labs/tricord/archive/v{{ version }}.tar.gz";
+        assert_eq!(templatize_recipe_name_segment(url, "tri"), url);
+    }
+
+    #[test]
+    fn templatize_skips_empty_recipe_name() {
+        let url = "https://github.com/foo/bar/archive/v{{ version }}.tar.gz";
+        assert_eq!(templatize_recipe_name_segment(url, ""), url);
     }
 }
