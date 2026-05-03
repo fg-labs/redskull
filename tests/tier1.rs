@@ -136,6 +136,65 @@ path = "src/main.rs"
     assert_eq!(meta.binary_names(), vec!["ska"]);
 }
 
+/// Regression for issue #18: Cargo.toml with `[[bin]]` entries declaring
+/// multiple targets must surface every binary name (not just the package
+/// name). A consumer that maps binaries to test commands then ends up with
+/// one `<bin> --help` line per declared binary.
+#[test]
+fn test_parse_cargo_toml_multiple_binaries() {
+    let toml_str = r#"
+[package]
+name = "swiss-army"
+
+[[bin]]
+name = "saw"
+path = "src/saw.rs"
+
+[[bin]]
+name = "screwdriver"
+path = "src/screwdriver.rs"
+"#;
+    let meta = CargoMetadata::from_toml_str(toml_str).unwrap();
+    assert_eq!(meta.binary_names(), vec!["saw", "screwdriver"]);
+}
+
+/// End-to-end regression for issue #18: a crate whose `[[bin]] name` differs
+/// from the `[package] name` (e.g. tricord → `tricorder`) must produce a
+/// rendered recipe whose `test:` block calls the binary, not the package.
+/// This wires the same path the CLI takes — `binary_names()` →
+/// `RecipeBuilder::add_binary` → `MetaYamlRenderer` — so a future regression
+/// in any of those steps fails this test.
+#[test]
+fn test_recipe_uses_bin_name_when_it_differs_from_package_name() {
+    let toml_str = r#"
+[package]
+name = "tricord"
+version = "0.1.0"
+
+[[bin]]
+name = "tricorder"
+path = "src/main.rs"
+"#;
+    let meta = CargoMetadata::from_toml_str(toml_str).unwrap();
+    let bins = meta.binary_names();
+    assert_eq!(bins, vec!["tricorder"], "binary_names must surface the [[bin]] name");
+
+    let mut builder = RecipeBuilder::new("tricord", "0.1.0");
+    builder.github_source("fg-labs", "tricord", "deadbeef").license("MIT");
+    for bin in &bins {
+        builder.add_binary(bin);
+    }
+
+    let (recipe, _script) = builder.build();
+    let output = MetaYamlRenderer.render(&recipe);
+
+    assert_contains(&output, "tricorder --help", "test command must use the [[bin]] name");
+    assert!(
+        !output.contains("tricord --help"),
+        "test command must not fall back to the package name when [[bin]] declares a different name"
+    );
+}
+
 #[test]
 fn test_parse_cargo_toml_no_explicit_bin() {
     let toml_str = r#"
