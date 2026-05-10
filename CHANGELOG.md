@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/fg-labs/redskull/compare/v0.1.1...v0.1.2) - 2026-05-10
+
+### Fixed
+
+- *(renderer)* emit fn: directive so conda-build can extract source tarballs ([#23](https://github.com/fg-labs/redskull/pull/23))
+- *(recipe)* substitute {{ name }} for the recipe-name segment in source.url ([#21](https://github.com/fg-labs/redskull/pull/21))
+- *(recipe)* emit compiler('c') alongside clangdev when bindgen is detected ([#20](https://github.com/fg-labs/redskull/pull/20))
+
+### Other
+
+- *(crate-inspector)* cover [[bin]] name auto-detection end-to-end ([#22](https://github.com/fg-labs/redskull/pull/22))
+- *(readme)* use absolute URLs for logo images ([#15](https://github.com/fg-labs/redskull/pull/15))
+
 ## [0.1.1](https://github.com/fg-labs/redskull/compare/v0.1.0...v0.1.1) - 2026-04-24
 
 ### Added
