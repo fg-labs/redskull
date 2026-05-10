@@ -45,6 +45,13 @@ impl MetaYamlRenderer {
     fn render_source(&self, out: &mut String, source: &Source) {
         writeln!(out, "source:").unwrap();
         writeln!(out, "  url: {}", source.url).unwrap();
+        // Emit `fn:` so conda-build can recognize the format and auto-strip
+        // the single top-level directory inside the tarball. Without it,
+        // crates.io URLs (which end in `/download`, no extension) produce a
+        // build where `cargo` can't find Cargo.toml in the work dir.
+        if !source.filename.is_empty() {
+            writeln!(out, "  fn: {}", source.filename).unwrap();
+        }
         writeln!(out, "  sha256: {}", source.sha256).unwrap();
         writeln!(out).unwrap();
     }

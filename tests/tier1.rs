@@ -520,6 +520,35 @@ fn test_builder_crates_io_source() {
         !output.contains("/api/v1/crates/fqtk/{{ version }}/download"),
         "crates.io URL should not hardcode the crate name when it matches the recipe name"
     );
+    // The `fn:` directive is required because the crates.io download URL ends in
+    // `/download` (no extension), so conda-build can't infer the archive format.
+    // Without `fn:`, the tarball isn't auto-extracted/auto-stripped and `cargo` can't
+    // find Cargo.toml in the work dir at build time. The filename uses `-` between
+    // name and version to match the actual top-level directory inside the tarball.
+    assert!(
+        output.contains("fn: fqtk-{{ version }}.tar.gz"),
+        "crates.io recipe must declare fn: <name>-{{{{ version }}}}.tar.gz so conda-build extracts and strips the tarball"
+    );
+}
+
+#[test]
+fn test_renderer_emits_fn_directive_when_filename_set() {
+    // The `fn:` directive tells conda-build the archive's filename so it can
+    // recognize the format (tar.gz) and auto-strip the single top-level directory.
+    // This matters most for crates.io URLs that end in `/download` (no extension),
+    // but is also useful for any source where the URL doesn't reveal the format.
+    let recipe = minimal_recipe("test", "1.0.0");
+    let output = render(&recipe);
+    assert_contains(&output, "fn: test-1.0.0.tar.gz", "render_source should emit fn: line");
+}
+
+#[test]
+fn test_renderer_skips_fn_directive_when_filename_empty() {
+    // Belt-and-suspenders: an empty filename should not emit a stray `fn:` line.
+    let mut recipe = minimal_recipe("test", "1.0.0");
+    recipe.source.filename = String::new();
+    let output = render(&recipe);
+    assert!(!output.contains("\n  fn:"), "render_source should omit fn: when filename is empty");
 }
 
 // If the crates.io dl_path format ever drifts and the version segment can't be found,

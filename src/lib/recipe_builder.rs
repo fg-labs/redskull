@@ -121,7 +121,9 @@ impl RecipeBuilder {
         let templated = dl_path.replacen(&needle, "/{{ version }}/", 1);
         let url = format!("https://crates.io{templated}");
         self.source_url = templatize_recipe_name_segment(&url, &self.name);
-        self.source_filename = format!("{}.{{{{ version }}}}.tar.gz", self.name);
+        // Use `-` (not `.`) to match the github_source pattern and the actual
+        // top-level directory name inside the crate tarball (`<name>-<version>/`).
+        self.source_filename = format!("{}-{{{{ version }}}}.tar.gz", self.name);
         self.source_sha256 = sha256.to_string();
         self
     }
