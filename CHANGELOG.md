@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/fg-labs/redskull/compare/v0.1.2...v0.1.3) - 2026-06-16
+
+### Fixed
+
+- *(sys-deps)* treat vendored compression -sys crates as C-compiler-only ([#33](https://github.com/fg-labs/redskull/pull/33))
+
 ## [0.1.2](https://github.com/fg-labs/redskull/compare/v0.1.1...v0.1.2) - 2026-05-10
 
 ### Fixed
