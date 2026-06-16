@@ -186,10 +186,12 @@ Releases are automated with [`release-plz`][release-plz-link], driven by [Conven
 
 ### How it works
 
-On every push to `main`, the `release-plz` workflow (`.github/workflows/release-plz.yml`) runs and does two things:
+On every push to `main`, the `publish` workflow (`.github/workflows/publish.yml`) runs two jobs:
 
-1. **Opens or updates a release PR** that bumps the version in `Cargo.toml` and `Cargo.lock` and updates `CHANGELOG.md` based on commit messages since the last tag.
-2. **Publishes to crates.io and creates a GitHub release** when a release PR is merged, tagging the commit and pushing the crate to crates.io.
+1. **`release-pr`** — `release-plz` opens or updates a release PR that bumps the version in `Cargo.toml` and `Cargo.lock` and updates `CHANGELOG.md` based on commit messages since the last tag.
+2. **`publish`** — when a release PR is merged (so the version in `Cargo.toml` no longer matches the latest version on crates.io), the crate is published to crates.io via Trusted Publishing and a GitHub release is tagged and created.
+
+Both jobs authenticate using a short-lived GitHub App token (`FG_LABS_BOT_APP_ID` / `FG_LABS_BOT_PRIVATE_KEY`) rather than the default `GITHUB_TOKEN`, so that the release PR and tags it creates can trigger other workflows.
 
 ### Conventional Commits
 
@@ -206,15 +208,15 @@ This tool follows [Semantic Versioning](https://semver.org/).
 
 1. Merge your changes to `main` using Conventional Commit messages.
 2. Review the release PR opened by `release-plz` (version bump + changelog).
-3. Merge the release PR. `release-plz` publishes to crates.io and creates the GitHub release automatically.
+3. Merge the release PR. The `publish` job then publishes to crates.io and creates the GitHub release automatically.
 
 ### Publishing credentials: Trusted Publishing
 
 This repository uses [crates.io Trusted Publishing][trusted-publishing-link] (OIDC) instead of a long-lived
-`CARGO_REGISTRY_TOKEN` secret. The `release-plz` workflow requests a short-lived token from crates.io via
+`CARGO_REGISTRY_TOKEN` secret. The `publish` job requests a short-lived token from crates.io via
 GitHub's OIDC provider at publish time — nothing needs to be stored in the repository.
 
-The workflow already sets `id-token: write` on the release job, which is required for OIDC.
+The workflow already sets `id-token: write` on the `publish` job, which is required for OIDC.
 
 #### First release
 
@@ -236,7 +238,7 @@ After `0.1.0` is on crates.io, configure a Trusted Publisher for this repository
 
 * Repository owner: `fg-labs`
 * Repository name: `redskull`
-* Workflow filename: `release-plz.yml`
+* Workflow filename: `publish.yml`
 * Environment: *(leave blank)*
 
 Once configured, merging a release PR on `main` will publish automatically.
