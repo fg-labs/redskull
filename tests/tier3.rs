@@ -2,18 +2,51 @@ mod common;
 
 use redskull_lib::recipe_builder::RecipeBuilder;
 use redskull_lib::renderer::{MetaYamlRenderer, Renderer};
-use redskull_lib::sys_deps::{detect_host_deps, map_sys_crate, needs_bindgen, needs_c_compiler};
+use redskull_lib::sys_deps::{
+    detect_host_deps, is_vendored_static_sys_crate, map_sys_crate, needs_bindgen, needs_c_compiler,
+    needs_cmake, needs_make, needs_pkg_config,
+};
 
 use common::*;
 
 #[test]
 fn test_simple_sys_mappings() {
     assert_eq!(map_sys_crate("openssl-sys"), vec![("openssl", Some("not osx"))]);
-    assert_eq!(map_sys_crate("libz-sys"), vec![("zlib", None)]);
-    assert_eq!(map_sys_crate("bzip2-sys"), vec![("bzip2", None)]);
-    assert_eq!(map_sys_crate("lzma-sys"), vec![("xz", None)]);
     assert_eq!(map_sys_crate("libcurl-sys"), vec![("libcurl", None)]);
     assert_eq!(map_sys_crate("libsqlite3-sys"), vec![("sqlite", None)]);
+    assert_eq!(map_sys_crate("libgit2-sys"), vec![("libgit2", None)]);
+}
+
+/// Crates that vendor their C sources and statically link by default must not
+/// produce a host/run mapping — they need only a C compiler.
+#[test]
+fn test_vendored_static_sys_crates_have_no_host_mapping() {
+    for crate_name in [
+        "libdeflate-sys",
+        "libz-sys",
+        "libz-ng-sys",
+        "bzip2-sys",
+        "lzma-sys",
+        "lz4-sys",
+        "zstd-sys",
+    ] {
+        assert!(is_vendored_static_sys_crate(crate_name), "{crate_name} should be vendored-static");
+        assert!(map_sys_crate(crate_name).is_empty(), "{crate_name} must not emit a host/run dep",);
+    }
+}
+
+/// A vendored, static-by-default `-sys` crate (libdeflate-sys, as in dupblaster)
+/// should produce a recipe needing only `compiler('c')`: no host/run dep, no
+/// pkg-config, no make, no cmake. Regression test for issue #32.
+#[test]
+fn test_libdeflate_sys_needs_only_c_compiler() {
+    let deps = ["libdeflater", "libdeflate-sys", "cc", "serde"];
+
+    assert!(needs_c_compiler(&deps), "libdeflate-sys still needs a C compiler");
+    assert!(detect_host_deps(&deps).is_empty(), "no host dep for vendored libdeflate-sys");
+    assert!(!needs_pkg_config(&deps), "no pkg-config for vendored libdeflate-sys");
+    assert!(!needs_make(&deps), "no make for vendored libdeflate-sys");
+    assert!(!needs_cmake(&deps), "no cmake for vendored libdeflate-sys");
 }
 
 #[test]
@@ -36,15 +69,18 @@ fn test_unknown_crate() {
 
 #[test]
 fn test_detect_host_deps() {
+    // libz-sys is vendored + static by default, so it contributes no host dep;
+    // only the genuinely system-linked openssl-sys does.
     let deps = detect_host_deps(&["serde", "openssl-sys", "clap", "libz-sys"]);
-    assert_eq!(deps.len(), 2);
+    assert_eq!(deps.len(), 1);
     assert!(deps.iter().any(|(n, _)| *n == "openssl"));
-    assert!(deps.iter().any(|(n, _)| *n == "zlib"));
 }
 
 #[test]
 fn test_needs_c_compiler() {
+    // Vendored -sys crates still need a C compiler even without a host mapping.
     assert!(needs_c_compiler(&["libz-sys", "serde"]));
+    assert!(needs_c_compiler(&["libdeflate-sys", "serde"]));
     assert!(needs_c_compiler(&["cc", "serde"]));
     assert!(!needs_c_compiler(&["serde", "clap", "tokio"]));
 }

@@ -8,16 +8,14 @@
 
 /// Returns (conda_package_name, optional_platform_selector) pairs
 /// for a given Rust crate name. Returns empty vec for unknown crates.
+///
+/// Only crates that dynamically link a system shared library belong here. The
+/// compression `-sys` crates (libdeflate-sys, zstd-sys, ...) deliberately do
+/// *not* appear: they vendor their C sources and statically link by default,
+/// so they need a C compiler but no conda host/run dependency. See
+/// [`is_vendored_static_sys_crate`].
 pub fn map_sys_crate(crate_name: &str) -> Vec<(&'static str, Option<&'static str>)> {
     match crate_name {
-        // Compression
-        "libz-sys" | "libz-ng-sys" => vec![("zlib", None)],
-        "bzip2-sys" => vec![("bzip2", None)],
-        "lzma-sys" => vec![("xz", None)],
-        "libdeflate-sys" => vec![("libdeflate", None)],
-        "lz4-sys" => vec![("lz4", None)],
-        "zstd-sys" => vec![("zstd", None)],
-
         // TLS/crypto — openssl excluded on macOS (uses system SSL)
         "openssl-sys" => vec![("openssl", Some("not osx"))],
 
@@ -68,11 +66,31 @@ pub fn detect_host_deps(dependency_names: &[&str]) -> Vec<(&'static str, Option<
 /// (they bundle and statically link their own C sources).
 const C_ONLY_CRATES: &[&str] = &["mimalloc", "libmimalloc-sys"];
 
+/// `-sys` crates that vendor their C sources and statically link them by
+/// default. They need a C compiler at build time but *not* a conda host/run
+/// dependency, `pkg-config`, or `make`/`cmake` — the bundled sources are
+/// compiled directly via the `cc` crate.
+///
+/// These are kept separate from [`map_sys_crate`] because emitting a host/run
+/// dep for them would add a runtime dependency the binary never dynamically
+/// loads, plus over-broad `run_exports` pinning, to the generated recipe.
+const VENDORED_STATIC_SYS_CRATES: &[&str] =
+    &["libdeflate-sys", "libz-sys", "libz-ng-sys", "bzip2-sys", "lzma-sys", "lz4-sys", "zstd-sys"];
+
+/// Returns true if `crate_name` vendors its C sources and statically links by
+/// default (so it needs only a C compiler, no system host library).
+pub fn is_vendored_static_sys_crate(crate_name: &str) -> bool {
+    VENDORED_STATIC_SYS_CRATES.contains(&crate_name)
+}
+
 /// Returns true if any dependency links C code.
 /// Detects `-sys` crates, the `cc` build crate, and crates that bundle their own C sources.
 pub fn needs_c_compiler(dependency_names: &[&str]) -> bool {
     dependency_names.iter().any(|name| {
-        *name == "cc" || !map_sys_crate(name).is_empty() || C_ONLY_CRATES.contains(name)
+        *name == "cc"
+            || !map_sys_crate(name).is_empty()
+            || C_ONLY_CRATES.contains(name)
+            || is_vendored_static_sys_crate(name)
     })
 }
 
@@ -104,15 +122,11 @@ pub fn needs_bindgen(dependency_names: &[&str]) -> bool {
 
 /// Returns true if any dependency typically needs pkg-config to locate system libraries.
 pub fn needs_pkg_config(dependency_names: &[&str]) -> bool {
+    // Vendored, static-by-default `-sys` crates (see VENDORED_STATIC_SYS_CRATES)
+    // are intentionally absent: they compile their own C sources and never need
+    // pkg-config to locate a system library.
     const PKG_CONFIG_CRATES: &[&str] = &[
         "openssl-sys",
-        "libz-sys",
-        "libz-ng-sys",
-        "bzip2-sys",
-        "lzma-sys",
-        "libdeflate-sys",
-        "lz4-sys",
-        "zstd-sys",
         "curl-sys",
         "libcurl-sys",
         "libsqlite3-sys",
@@ -130,8 +144,11 @@ pub fn needs_pkg_config(dependency_names: &[&str]) -> bool {
 
 /// Returns true if any dependency typically needs cmake to build.
 pub fn needs_cmake(dependency_names: &[&str]) -> bool {
+    // zstd-sys is intentionally excluded: it vendors its C sources and compiles
+    // them via the `cc` crate by default, so it needs neither cmake nor a system
+    // zstd (see VENDORED_STATIC_SYS_CRATES).
     const CMAKE_CRATES: &[&str] =
-        &["grpcio-sys", "rocksdb-sys", "snappy-sys", "leveldb-sys", "libssh2-sys", "zstd-sys"];
+        &["grpcio-sys", "rocksdb-sys", "snappy-sys", "leveldb-sys", "libssh2-sys"];
     dependency_names
         .iter()
         .any(|name| CMAKE_CRATES.contains(name) || *name == "cmake" || *name == "cmake-build")

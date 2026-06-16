@@ -1017,7 +1017,10 @@ fn test_build_sh_no_cargo_net_git_fetch_by_default() {
 #[test]
 fn test_needs_pkg_config() {
     assert!(sys_deps::needs_pkg_config(&["openssl-sys", "serde"]));
-    assert!(sys_deps::needs_pkg_config(&["libz-sys"]));
+    assert!(sys_deps::needs_pkg_config(&["libgit2-sys"]));
+    // Vendored, static-by-default -sys crates never need pkg-config.
+    assert!(!sys_deps::needs_pkg_config(&["libz-sys"]));
+    assert!(!sys_deps::needs_pkg_config(&["libdeflate-sys", "zstd-sys"]));
     assert!(!sys_deps::needs_pkg_config(&["serde", "clap"]));
 }
 
@@ -1026,6 +1029,8 @@ fn test_needs_cmake() {
     assert!(sys_deps::needs_cmake(&["cmake", "serde"]));
     assert!(sys_deps::needs_cmake(&["rocksdb-sys"]));
     assert!(!sys_deps::needs_cmake(&["openssl-sys"]));
+    // zstd-sys vendors + compiles via the `cc` crate, so it needs no cmake.
+    assert!(!sys_deps::needs_cmake(&["zstd-sys"]));
 }
 
 #[test]
