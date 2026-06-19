@@ -154,9 +154,15 @@ fn resolve_with_tag(
 
 /// Compute SHA256 hex digest from bytes.
 fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        write!(hex, "{byte:02x}").expect("writing to a String is infallible");
+    }
+    hex
 }
 
 /// Fetch a raw file from a GitHub repo at a given tag.
@@ -407,4 +413,30 @@ pub fn fetch_and_extract(client: &Client, url: &str) -> Result<(String, Extracte
     let hash = sha256_hex(&bytes);
     let extracted = extract_tar_gz(&bytes)?;
     Ok((hash, extracted))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sha256_hex_matches_known_vectors() {
+        // Standard NIST test vectors for SHA-256.
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn sha256_hex_is_lowercase_and_64_chars() {
+        let hash = sha256_hex(b"redskull");
+        assert_eq!(hash.len(), 64);
+        assert!(is_valid_sha256(&hash));
+        assert_eq!(hash, hash.to_lowercase());
+    }
 }
