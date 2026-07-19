@@ -89,11 +89,11 @@ Options:
       --source <SOURCE>
           Source type: "github" (default) or "crates-io"
 
-          [default: github]
-
           Possible values:
           - github:    Use GitHub release archives (default)
           - crates-io: Use crates.io tarballs
+
+          [default: github]
 
       --max-pin <MAX_PIN>
           Override the max_pin value for run_exports (default: "x.x"). Use "x" for pre-1.0 tools

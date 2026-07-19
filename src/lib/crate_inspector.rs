@@ -12,7 +12,7 @@ impl CargoMetadata {
     /// Parse a Cargo.toml string.
     pub fn from_toml_str(s: &str) -> Result<Self> {
         let parsed: toml::Value =
-            s.parse().map_err(|e| anyhow!("Failed to parse Cargo.toml: {e}"))?;
+            toml::from_str(s).map_err(|e| anyhow!("Failed to parse Cargo.toml: {e}"))?;
         Ok(Self { parsed })
     }
 
@@ -198,7 +198,7 @@ pub fn resolve_workspace_members(members: &[String], tree: &[String]) -> Vec<Str
 /// as appropriate.
 pub fn parse_cargo_lock_str(content: &str) -> Result<Vec<String>> {
     let parsed: toml::Value =
-        content.parse().map_err(|e| anyhow!("Failed to parse Cargo.lock: {e}"))?;
+        toml::from_str(content).map_err(|e| anyhow!("Failed to parse Cargo.lock: {e}"))?;
     let Some(packages) = parsed.get("package").and_then(|p| p.as_array()) else {
         return Ok(vec![]);
     };
