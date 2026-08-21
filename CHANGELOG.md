@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/fg-labs/redskull/compare/v0.1.3...v0.1.4) - 2026-08-21
+
+### Other
+
+- chore(deps)(deps): bump the cargo-all group across 1 directory with 7 updates ([#41](https://github.com/fg-labs/redskull/pull/41))
+- chore(ci)(deps): bump the github-actions group across 1 directory with 3 updates ([#40](https://github.com/fg-labs/redskull/pull/40))
+- chore(deps)(deps): bump the cargo-all group across 1 directory with 15 updates ([#31](https://github.com/fg-labs/redskull/pull/31))
+- chore(ci)(deps): bump the github-actions group with 2 updates ([#37](https://github.com/fg-labs/redskull/pull/37))
+- chore(ci)(deps): bump the github-actions group across 1 directory with 3 updates ([#28](https://github.com/fg-labs/redskull/pull/28))
+
 ## [0.1.3](https://github.com/fg-labs/redskull/compare/v0.1.2...v0.1.3) - 2026-06-16
 
 ### Fixed
